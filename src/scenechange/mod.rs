@@ -325,6 +325,26 @@ impl SceneChangeDetector {
   }
 }
 
+/// Scaling factor based on pyscenedetect scaling
+fn detect_scale_factor(sequence: &Arc<Sequence>) -> i32 {
+  let small_edge =
+    cmp::min(sequence.max_frame_height, sequence.max_frame_width) as i32;
+  let scale_factor = match small_edge {
+    0..=240 => 1,
+    241..=480 => 2,
+    481..=720 => 4,
+    721..=1080 => 6,
+    1081..=1600 => 8,
+    1601..=std::i32::MAX => 12,
+    _ => 1,
+  };
+  debug!(
+    "Scene detection scale factor {} for resolution [{},{}]",
+    scale_factor, sequence.max_frame_width, sequence.max_frame_height
+  );
+  scale_factor
+}
+
 /// This struct primarily exists for returning metrics to the caller
 /// for logging debug information.
 #[derive(Debug, Clone, Copy)]
