@@ -470,6 +470,48 @@ impl<T: Pixel> Plane<T> {
     new
   }
 
+  /// Returns downscaled plane with the resolution of each side devided by scale.
+  /// Downsample with box filter
+  pub fn downscale(&self, scale: usize) -> Plane<T> {
+    let src = self;
+    // unsafe: all pixels initialized in this function
+    let mut new = unsafe {
+      Plane::new_uninitialized(
+        (src.cfg.width + 1) / scale,
+        (src.cfg.height + 1) / scale,
+        src.cfg.xdec + scale,
+        src.cfg.ydec + scale,
+        src.cfg.xpad / scale,
+        src.cfg.ypad / scale,
+      )
+    };
+
+    let width = new.cfg.width;
+    let height = new.cfg.height;
+
+    let data_origin = src.data_origin();
+    for (row_idx, dst_row) in new
+      .mut_slice(PlaneOffset::default())
+      .rows_iter_mut()
+      .enumerate()
+      .take(height)
+    {
+      let src_top_row = &data_origin[(src.cfg.stride * row_idx * scale)..];
+      let src_bottom_row =
+        &data_origin[(src.cfg.stride * (row_idx * scale + 1))..];
+      for (col, dst) in dst_row.iter_mut().take(width).enumerate() {
+        let mut sum = 0;
+        sum += u32::cast_from(src_top_row[scale * col]);
+        sum += u32::cast_from(src_top_row[scale * col + 1]);
+        sum += u32::cast_from(src_bottom_row[scale * col]);
+        sum += u32::cast_from(src_bottom_row[scale * col + 1]);
+        let avg = (sum + 2) >> 2;
+        *dst = T::cast_from(avg);
+      }
+    }
+    new
+  }
+
   /// Iterates over the pixels in the plane, skipping the padding.
   pub fn iter(&self) -> PlaneIter<'_, T> {
     PlaneIter::new(self)
