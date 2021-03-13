@@ -14,6 +14,7 @@ use crate::encoder::Sequence;
 use crate::frame::*;
 use crate::util::{CastFromPrimitive, Pixel};
 use rust_hawktracer::*;
+use std::cmp;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -23,6 +24,8 @@ pub struct SceneChangeDetector {
   threshold: u64,
   /// Fast scene cut detection mode, uses simple SAD instead of encoder cost estimates.
   fast_mode: bool,
+  /// scaling factor for fast scene detection
+  scale_factor: i32,
   /// Determine whether or not short scene flashes should be excluded
   exclude_scene_flashes: bool,
   /// Frames that cannot be marked as keyframes due to the algorithm excluding them.
@@ -58,10 +61,12 @@ impl SceneChangeDetector {
     let bit_depth = encoder_config.bit_depth;
     let fast_mode = encoder_config.speed_settings.fast_scene_detection
       || encoder_config.low_latency;
-
+    let scale_factor =
+      if fast_mode { detect_scale_factor(&sequence) } else { 1 };
     Self {
       threshold: BASE_THRESHOLD * bit_depth as u64 / 8,
       fast_mode,
+      scale_factor,
       exclude_scene_flashes,
       excluded_frames: BTreeSet::new(),
       bit_depth,
@@ -85,6 +90,7 @@ impl SceneChangeDetector {
     &mut self, frame_set: &[Arc<Frame<T>>], input_frameno: u64,
     previous_keyframe: u64,
   ) -> bool {
+    // debug!("Scale factor {}", detect_scale_factor(frame_set[0].clone()));
     // Find the distance to the previous keyframe.
     let distance = input_frameno - previous_keyframe;
 
@@ -100,16 +106,13 @@ impl SceneChangeDetector {
       return false;
     }
 
-    if self.exclude_scene_flashes {
-      self.exclude_scene_flashes(frame_set, input_frameno, previous_keyframe);
-    }
-
-    self.is_key_frame(
+    let keyframe_check = self.is_key_frame(
       frame_set[0].clone(),
       frame_set[1].clone(),
       input_frameno,
       previous_keyframe,
-    )
+    );
+    keyframe_check
   }
 
   /// Determines if `current_frame` should be a keyframe.
