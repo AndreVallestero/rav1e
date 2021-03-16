@@ -7,12 +7,18 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
-use std::alloc::{alloc, dealloc, Layout};
-use std::fmt::{Debug, Display, Formatter};
 use std::iter::FusedIterator;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Index, IndexMut, Range};
+use std::{
+  alloc::{alloc, dealloc, Layout},
+  u32,
+};
+use std::{
+  fmt::{Debug, Display, Formatter},
+  usize,
+};
 
 use crate::math::*;
 use crate::pixel::*;
@@ -470,17 +476,17 @@ impl<T: Pixel> Plane<T> {
     new
   }
 
-  /// Returns downscaled plane with the resolution of each side devided by scale.
-  /// Downsample with box filter
+  /// Returns plane with downscaled resolution
+  /// Downscaling the plane by integer value
   pub fn downscale(&self, scale: usize) -> Plane<T> {
     let src = self;
     // unsafe: all pixels initialized in this function
     let mut new = unsafe {
       Plane::new_uninitialized(
-        (src.cfg.width + 1) / scale,
-        (src.cfg.height + 1) / scale,
-        src.cfg.xdec + scale,
-        src.cfg.ydec + scale,
+        src.cfg.width / scale,
+        src.cfg.height / scale,
+        src.cfg.xdec + 1,
+        src.cfg.ydec + 1,
         src.cfg.xpad / scale,
         src.cfg.ypad / scale,
       )
@@ -490,22 +496,23 @@ impl<T: Pixel> Plane<T> {
     let height = new.cfg.height;
 
     let data_origin = src.data_origin();
-    for (row_idx, dst_row) in new
+    for (_, dst_row) in new
       .mut_slice(PlaneOffset::default())
       .rows_iter_mut()
       .enumerate()
       .take(height)
     {
-      let src_top_row = &data_origin[(src.cfg.stride * row_idx * scale)..];
-      let src_bottom_row =
-        &data_origin[(src.cfg.stride * (row_idx * scale + 1))..];
       for (col, dst) in dst_row.iter_mut().take(width).enumerate() {
         let mut sum = 0;
-        sum += u32::cast_from(src_top_row[scale * col]);
-        sum += u32::cast_from(src_top_row[scale * col + 1]);
-        sum += u32::cast_from(src_bottom_row[scale * col]);
-        sum += u32::cast_from(src_bottom_row[scale * col + 1]);
-        let avg = (sum + 2) >> 2;
+        for x in 1..=scale {
+          let src_row = &data_origin[(src.cfg.stride * 2 + x)..];
+          for y in 1..=scale {
+            sum += u32::cast_from(src_row[col * 2 + y])
+          }
+        }
+
+        let pixels: u32 = (scale * scale) as u32; //
+        let avg: u32 = sum / pixels;
         *dst = T::cast_from(avg);
       }
     }
