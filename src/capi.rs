@@ -67,6 +67,7 @@ struct FrameOpaque {
 }
 
 unsafe impl Send for FrameOpaque {}
+unsafe impl Sync for FrameOpaque {}
 
 impl Default for FrameOpaque {
   fn default() -> Self {
@@ -180,7 +181,7 @@ impl EncContext {
   }
   fn send_frame(
     &mut self, frame: Option<FrameInternal>, frame_type: FrameTypeOverride,
-    opaque: Option<Box<dyn std::any::Any + Send>>,
+    opaque: Option<rav1e::Opaque>,
   ) -> Result<(), rav1e::EncoderStatus> {
     let info =
       rav1e::FrameParameters { frame_type_override: frame_type, opaque };
@@ -1062,10 +1063,7 @@ pub unsafe extern fn rav1e_send_frame(
   let maybe_opaque = if frame.is_null() {
     None
   } else {
-    (*frame)
-      .opaque
-      .take()
-      .map(|o| Box::new(o) as Box<dyn std::any::Any + Send>)
+    (*frame).opaque.take().map(|o| rav1e::Opaque::new(o))
   };
 
   let ret = (*ctx)

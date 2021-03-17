@@ -105,11 +105,12 @@ jobs:
     - name: Install sccache
       env:
         LINK: https://github.com/mozilla/sccache/releases/download
-        SCCACHE_VERSION: 0.2.13
+        SCCACHE_VERSION: 0.2.15
       run: |
-        SCCACHE_FILE=sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl
+        SCCACHE_FILE=sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl
         mkdir -p $HOME/.local/bin
-        curl -L "$LINK/$SCCACHE_VERSION/$SCCACHE_FILE.tar.gz" | tar xz
+        curl -L "$LINK/v$SCCACHE_VERSION/$SCCACHE_FILE.tar.gz" | tar xz
+        chmod +x $SCCACHE_FILE/sccache
         mv -f $SCCACHE_FILE/sccache $HOME/.local/bin/sccache
         echo "$HOME/.local/bin" >> $GITHUB_PATH
     - name: Add nasm
@@ -127,11 +128,11 @@ jobs:
         matrix.conf == 'grcov-coveralls'
       env:
         LINK: https://www.deb-multimedia.org/pool/main/a/aom-dmo
-        AOM_VERSION: 2.0.1-dmo0~bpo10+1
+        AOM_VERSION: 2.0.2-dmo0~bpo10+1
         AOM_DEV_SHA256: >-
-          57adde89e7e82da7839298739fe7c481f38daa15b0ca709ecd0881ab60787410
+          d31eee6524ea64c080312eeafc65355e378e043b1d738ff9b9bde3734a85779c
         AOM_LIB_SHA256: >-
-          cc418d1be85ae01eac96a5501b284554405bf8d73c59395a988de6812c57a84a
+          db8a04ca0984604f410c6bd8810ee31666a3bfd3964f3109cdb8f1ae33fec664
       run: |
         echo "$LINK/libaom-dev_${AOM_VERSION}_amd64.deb" >> DEBS
         echo "$LINK/libaom2_${AOM_VERSION}_amd64.deb" >> DEBS
@@ -143,11 +144,11 @@ jobs:
         matrix.conf == 'grcov-coveralls' || matrix.conf == 'fuzz' || matrix.conf == 'no-asm-tests'
       env:
         LINK: https://www.deb-multimedia.org/pool/main/d/dav1d-dmo
-        DAV1D_VERSION: 0.8.1-dmo1
+        DAV1D_VERSION: 0.8.2-dmo1
         DAV1D_DEV_SHA256: >-
-          dcf911325699d93a90818e16736e2c93b29d8e7538c1545accd3b25c610876c0
+          04d30fc34056467b91a627563c61b9a0046a2e084bb649791cd31887a6c76d8e
         DAV1D_LIB_SHA256: >-
-          06f51b9660d413417827270b298e2ad541bd8ddaae7e027ebcb6bb7b6b1ad006
+          0c3debb3a926e10009503e639dddcfd4082ed6e012340ca49682b738c243dedc
       run: |
         echo "$LINK/libdav1d-dev_${DAV1D_VERSION}_amd64.deb" >> DEBS
         echo "$LINK/libdav1d5_${DAV1D_VERSION}_amd64.deb" >> DEBS
@@ -392,20 +393,17 @@ jobs:
         sccache --stop-server
 
   build-windows:
-
     strategy:
       matrix:
-        conf:
-         - cargo-build
-         - cargo-test
-         - cargo-c
         include:
          - conf: cargo-build
-           toolchain: stable
+           target: x86_64-pc-windows-msvc
+         - conf: cargo-build
+           target: aarch64-pc-windows-msvc
          - conf: cargo-test
-           toolchain: stable
+           target: x86_64-pc-windows-msvc
          - conf: cargo-c
-           toolchain: stable-x86_64-pc-windows-gnu
+           target: x86_64-pc-windows-gnu
 
     env:
       RUST_BACKTRACE: full
@@ -416,11 +414,11 @@ jobs:
     if: >-
      (github.event_name == 'push' && !endsWith(github.event.head_commit.message, 'CI: skip')) ||
      (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.names, 'skip-ci'))
-
     runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v2
+    - uses: ilammy/setup-nasm@v1
     - name: Install sccache
       run: |
         $LINK = "https://github.com/mozilla/sccache/releases/download/0.2.12"
@@ -428,17 +426,17 @@ jobs:
         curl -LO "$LINK/$SCCACHE_FILE.tar.gz"
         tar xzf "$SCCACHE_FILE.tar.gz"
         echo "$Env:GITHUB_WORKSPACE/$SCCACHE_FILE" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-    - name: Install nasm
-      run: |
-        $NASM_VERSION="2.15.05"
-        $LINK = "https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/win64"
-        $NASM_FILE = "nasm-$NASM_VERSION-win64"
-        curl --ssl-no-revoke -LO "$LINK/$NASM_FILE.zip"
-        7z e -y "$NASM_FILE.zip" -o"C:\nasm"
-        echo "C:\nasm"  | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - name: Set MSVC x86_64 linker path
+      if: matrix.target != 'aarch64-pc-windows-msvc'
       run: |
         $LinkGlob = "VC\Tools\MSVC\*\bin\Hostx64\x64"
+        $env:PATH = "$env:PATH;${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+        $LinkPath = vswhere -latest -products * -find "$LinkGlob" | Select-Object -Last 1
+        echo "$LinkPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    - name: Set MSVC Arm64 linker path
+      if: matrix.target == 'aarch64-pc-windows-msvc'
+      run: |
+        $LinkGlob = "VC\Tools\MSVC\*\bin\Hostx64\Arm64"
         $env:PATH = "$env:PATH;${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
         $LinkPath = vswhere -latest -products * -find "$LinkGlob" | Select-Object -Last 1
         echo "$LinkPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -446,12 +444,14 @@ jobs:
       uses: actions-rs/toolchain@v1
       with:
         profile: minimal
-        toolchain: ${{ matrix.toolchain }}
+        toolchain: stable
+        target: ${{ matrix.target }}
         override: true
+        default: true
     - name: Install cargo-c
       if: matrix.conf == 'cargo-c'
       run: |
-        $LINK = "https://github.com/lu-zero/cargo-c/releases/download/v0.7.1"
+        $LINK = "https://github.com/lu-zero/cargo-c/releases/download/v0.7.3"
         $CARGO_C_FILE = "cargo-c-windows-msvc"
         curl -LO "$LINK/$CARGO_C_FILE.zip"
         7z e -y "$CARGO_C_FILE.zip" -o"${env:USERPROFILE}\.cargo\bin"
@@ -464,17 +464,17 @@ jobs:
       continue-on-error: true
       with:
         path: ~/.cargo/registry/cache
-        key: ${{ runner.os }}-${{ matrix.conf }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.conf }}-${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-${{ matrix.conf }}-cargo-registry-
+          ${{ runner.os }}-${{ matrix.conf }}-${{ matrix.target }}-cargo-registry-
     - name: Cache sccache output
       uses: actions/cache@v2
       continue-on-error: true
       with:
         path: C:\sccache
-        key: ${{ runner.os }}-${{ matrix.conf }}-sccache-${{ hashFiles('**/Cargo.*') }}
+        key: ${{ runner.os }}-${{ matrix.conf }}-${{ matrix.target }}-sccache-${{ hashFiles('**/Cargo.*') }}
         restore-keys: |
-          ${{ runner.os }}-${{ matrix.conf }}-sccache-
+          ${{ runner.os }}-${{ matrix.conf }}-${{ matrix.target }}-sccache-
     - name: Start sccache server
       run: |
         sccache --start-server

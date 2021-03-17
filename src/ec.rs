@@ -18,6 +18,7 @@ cfg_if::cfg_if! {
   }
 }
 
+use crate::context::CDFContextLog;
 use crate::util::{msb, ILog};
 use bitstream_io::{BigEndian, BitWrite, BitWriter};
 use std::io;
@@ -26,6 +27,12 @@ pub const OD_BITRES: u8 = 3;
 const EC_PROB_SHIFT: u32 = 6;
 const EC_MIN_PROB: u32 = 4;
 type ec_window = u32;
+
+macro_rules! symbol_with_update_decl {($($n:expr),*) => {$(paste::item!{
+  fn [<symbol_with_update_ $n>](
+    &mut self, s: u32, cdf: &mut [u16; $n], log: &mut CDFContextLog,
+  );
+})*}}
 
 /// Public trait interface to a bitstream Writer: a Counter can be
 /// used to count bits for cost analysis without actually storing
@@ -42,7 +49,10 @@ pub trait Writer {
   /// leaves cdf unchanged
   fn symbol_bits(&self, s: u32, cdf: &[u16]) -> u32;
   /// Write a symbol s, using the passed in cdf reference; updates the referenced cdf.
-  fn symbol_with_update(&mut self, s: u32, cdf: &mut [u16]);
+  fn symbol_with_update(
+    &mut self, s: u32, cdf: &mut [u16], log: &mut CDFContextLog,
+  );
+  symbol_with_update_decl!(2, 3, 4);
   /// Write a bool using passed in probability
   fn bool(&mut self, val: bool, f: u16);
   /// Write a single bit with flat proability
@@ -479,6 +489,14 @@ impl WriterBase<WriterEncoder> {
   }
 }
 
+macro_rules! symbol_with_update_impl {($($n:expr),*) => {$(paste::item!{
+  fn [<symbol_with_update_ $n>](
+    &mut self, s: u32, cdf: &mut [u16; $n], log: &mut CDFContextLog,
+  ) {
+    self.symbol_with_update(s, cdf, log);
+  }
+})*}}
+
 /// Generic/shared implementation for Writers with StorageBackends (ie, Encoders and Recorders)
 impl<S> Writer for WriterBase<S>
 where
@@ -516,14 +534,18 @@ where
   /// `cdf`: The CDF, such that symbol s falls in the range
   ///        `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
   ///       The values must be monotonically non-decreasing, and the last value
-  ///       must be exactly 32768. There should be at most 16 values.
+  ///       must be greater than 32704. There should be at most 16 values.
+  ///       The lower 6 bits of the last value hold the count.
   #[inline(always)]
   fn symbol(&mut self, s: u32, cdf: &[u16]) {
-    debug_assert!(cdf[cdf.len() - 1] == 0);
-    let nms = cdf.len() - s as usize;
-    let fl = if s > 0 { cdf[s as usize - 1] } else { 32768 };
-    let fh = cdf[s as usize];
-    debug_assert!(fh <= fl);
+    debug_assert!(cdf[cdf.len() - 1] < (1 << EC_PROB_SHIFT));
+    let s = s as usize;
+    debug_assert!(s < cdf.len());
+    // The above is stricter than the following overflow check: s <= cdf.len()
+    let nms = cdf.len() - s;
+    let fl = if s > 0 { unsafe { *cdf.get_unchecked(s - 1) } } else { 32768 };
+    let fh = unsafe { *cdf.get_unchecked(s) };
+    debug_assert!((fh >> EC_PROB_SHIFT) <= (fl >> EC_PROB_SHIFT));
     debug_assert!(fl <= 32768);
     self.store(fl, fh, nms as u16);
   }
@@ -534,29 +556,35 @@ where
   /// `cdf`: The CDF, such that symbol s falls in the range
   ///        `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
   ///       The values must be monotonically non-decreasing, and the last value
-  ///       must be exactly 32768. There should be at most 16 values.
-  fn symbol_with_update(&mut self, s: u32, cdf: &mut [u16]) {
-    let nsymbs = cdf.len() - 1;
+  ///       must be greater 32704. There should be at most 16 values.
+  ///       The lower 6 bits of the last value hold the count.
+  #[inline(always)]
+  fn symbol_with_update(
+    &mut self, s: u32, cdf: &mut [u16], log: &mut CDFContextLog,
+  ) {
     #[cfg(feature = "desync_finder")]
     {
       if self.debug {
         self.print_backtrace(s);
       }
     }
-    self.symbol(s, &cdf[..nsymbs]);
+    log.push(cdf);
+    self.symbol(s, cdf);
 
     update_cdf(cdf, s);
   }
+  symbol_with_update_impl!(2, 3, 4);
   /// Returns approximate cost for a symbol given a cumulative
   /// distribution function (CDF) table and current write state.
   /// `s`: The index of the symbol to encode.
   /// `cdf`: The CDF, such that symbol s falls in the range
   ///        `[s > 0 ? cdf[s - 1] : 0, cdf[s])`.
   ///       The values must be monotonically non-decreasing, and the last value
-  ///       must be exactly 32768. There should be at most 16 values.
+  ///       must be greater than 32704. There should be at most 16 values.
+  ///       The lower 6 bits of the last value hold the count.
   fn symbol_bits(&self, s: u32, cdf: &[u16]) -> u32 {
     let mut bits = 0;
-    debug_assert!(cdf[cdf.len() - 1] == 0);
+    debug_assert!(cdf[cdf.len() - 1] < (1 << EC_PROB_SHIFT));
     debug_assert!(32768 <= self.rng);
     let rng = (self.rng >> 8) as u32;
     let fh = cdf[s as usize] as u32 >> EC_PROB_SHIFT;
@@ -879,13 +907,21 @@ impl<W: io::Write> BCodeWriter for BitWriter<W, BigEndian> {
 
 pub(crate) mod rust {
   // Function to update the CDF for Writer calls that do so.
+  #[inline]
   pub fn update_cdf(cdf: &mut [u16], val: u32) {
-    let nsymbs = cdf.len() - 1;
-    let rate = 3 + (nsymbs >> 1).min(2) + (cdf[nsymbs] >> 4) as usize;
-    cdf[nsymbs] += 1 - (cdf[nsymbs] >> 5);
-
+    use crate::context::CDF_LEN_MAX;
+    let nsymbs = cdf.len();
+    let mut rate = 3 + (nsymbs >> 1).min(2);
+    if let Some(count) = cdf.last_mut() {
+      rate += (*count >> 4) as usize;
+      *count += 1 - (*count >> 5);
+    } else {
+      return;
+    }
     // Single loop (faster)
-    for (i, v) in cdf[..nsymbs - 1].iter_mut().enumerate() {
+    for (i, v) in
+      cdf[..nsymbs - 1].iter_mut().enumerate().take(CDF_LEN_MAX - 1)
+    {
       if i as u32 >= val {
         *v -= *v >> rate;
       } else {

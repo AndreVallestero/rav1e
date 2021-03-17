@@ -89,6 +89,7 @@ fn build_nasm_files() {
     "src/x86/ipred_ssse3.asm",
     "src/x86/itx.asm",
     "src/x86/itx_ssse3.asm",
+    "src/x86/looprestoration16_avx2.asm",
     "src/x86/mc_avx2.asm",
     "src/x86/mc16_avx2.asm",
     "src/x86/mc_avx512.asm",
@@ -98,7 +99,10 @@ fn build_nasm_files() {
     "src/x86/sad_avx.asm",
     "src/x86/satd.asm",
     "src/x86/sse.asm",
-    "src/x86/cdef.asm",
+    "src/x86/cdef_rav1e.asm",
+    "src/x86/cdef_sse.asm",
+    "src/x86/cdef16_avx2.asm",
+    "src/x86/cdef16_sse.asm",
     "src/x86/tables.asm",
   ];
 
@@ -175,6 +179,7 @@ fn build_asm_files() {
 
 fn rustc_version_check() {
   // This should match the version in the CI
+  // Make sure to updated README.md when this changes.
   const REQUIRED_VERSION: &str = "1.44.1";
   if version().unwrap() < Version::parse(REQUIRED_VERSION).unwrap() {
     eprintln!("rav1e requires rustc >= {}.", REQUIRED_VERSION);

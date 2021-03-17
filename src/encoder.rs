@@ -606,6 +606,8 @@ pub struct FrameInvariants<T: Pixel> {
   pub block_importances: Box<[f32]>,
   /// Pre-computed distortion_scale.
   pub distortion_scales: Box<[DistortionScale]>,
+  /// Pre-computed activity_scale.
+  pub activity_scales: Box<[DistortionScale]>,
 
   /// Target CPU feature level.
   pub cpu_feature_level: crate::cpu_features::CpuFeatureLevel,
@@ -747,9 +749,15 @@ impl<T: Pixel> FrameInvariants<T> {
         w_in_imp_b * h_in_imp_b
       ]
       .into_boxed_slice(),
+      activity_scales: vec![
+        DistortionScale::default();
+        w_in_imp_b * h_in_imp_b
+      ]
+      .into_boxed_slice(),
       cpu_feature_level: Default::default(),
       activity_mask: Default::default(),
-      enable_segmentation: config.speed_settings.enable_segmentation,
+      enable_segmentation: config.speed_settings.segmentation
+        != SegmentationLevel::Disabled,
       enable_inter_txfm_split: config.speed_settings.enable_inter_tx_split,
       sequence,
       config,
@@ -2388,7 +2396,7 @@ fn encode_partition_bottomup<T: Pixel, W: Writer>(
 
   let mut best_partition = PartitionType::PARTITION_INVALID;
 
-  let cw_checkpoint = cw.checkpoint();
+  let cw_checkpoint = cw.checkpoint(&tile_bo, fi.sequence.chroma_sampling);
   let w_pre_checkpoint = w_pre_cdef.checkpoint();
   let w_post_checkpoint = w_post_cdef.checkpoint();
 
@@ -3207,6 +3215,8 @@ fn encode_tile<'a, T: Pixel>(
     cw.bc.reset_left_contexts(planes);
 
     for sbx in 0..ts.sb_width {
+      cw.fc_log.clear();
+
       let tile_sbo = TileSuperBlockOffset(SuperBlockOffset { x: sbx, y: sby });
       let mut sbs_qe = SBSQueueEntry {
         sbo: tile_sbo,
