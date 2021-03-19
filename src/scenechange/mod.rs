@@ -343,17 +343,16 @@ impl SceneChangeDetector {
   }
 }
 
-/// Scaling factor based on pyscenedetect scaling
+/// Scaling factor for frame in scenedetection
 fn detect_scale_factor(sequence: &Arc<Sequence>) -> i32 {
   let small_edge =
     cmp::min(sequence.max_frame_height, sequence.max_frame_width) as i32;
   let scale_factor = match small_edge {
-    0..=240 => 1,
-    241..=480 => 2,
-    481..=720 => 4,
-    721..=1080 => 6,
-    1081..=1600 => 8,
-    1601..=std::i32::MAX => 12,
+    0..=480 => 1,
+    481..=720 => 2,
+    721..=1080 => 3,
+    1081..=1600 => 4,
+    1601..=std::i32::MAX => 6,
     _ => 1,
   };
   debug!(
