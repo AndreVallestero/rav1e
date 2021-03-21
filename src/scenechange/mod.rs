@@ -21,11 +21,13 @@ use std::sync::Arc;
 /// Runs keyframe detection on frames from the lookahead queue.
 pub struct SceneChangeDetector {
   /// Minimum average difference between YUV deltas that will trigger a scene change.
-  threshold: u64,
+  threshold: usize,
   /// Fast scene cut detection mode, uses simple SAD instead of encoder cost estimates.
   fast_mode: bool,
   /// scaling factor for fast scene detection
-  scale_factor: i32,
+  scale_factor: usize,
+  /// Number of pixels in scaled frame for fast mode
+  pixels: usize,
   /// Determine whether or not short scene flashes should be excluded
   exclude_scene_flashes: bool,
   /// Frames that cannot be marked as keyframes due to the algorithm excluding them.
@@ -57,16 +59,28 @@ impl SceneChangeDetector {
     // This may be adjusted later.
     //
     // This threshold is only used for the fast scenecut implementation.
-    const BASE_THRESHOLD: u64 = 12;
+    const BASE_THRESHOLD: usize = 35;
     let bit_depth = encoder_config.bit_depth;
     let fast_mode = encoder_config.speed_settings.fast_scene_detection
       || encoder_config.low_latency;
+
+    // Scale factor for fast scene detection
     let scale_factor =
-      if fast_mode { detect_scale_factor(&sequence) } else { 1 };
+      if fast_mode { detect_scale_factor(&sequence) } else { 1 as usize };
+
+    // Pixel count for fast scenedetect
+    let pixels = if fast_mode {
+      (sequence.max_frame_height as usize / scale_factor)
+        * (sequence.max_frame_width as usize / scale_factor)
+    } else {
+      1
+    };
+
     Self {
-      threshold: BASE_THRESHOLD * bit_depth as u64 / 8,
+      threshold: BASE_THRESHOLD * bit_depth / 8,
       fast_mode,
       scale_factor,
+      pixels,
       exclude_scene_flashes,
       excluded_frames: BTreeSet::new(),
       bit_depth,
@@ -238,17 +252,17 @@ impl SceneChangeDetector {
     if self.fast_mode {
       // Downscaling both frames for comparison
       let frame1_scaled =
-        frame1.planes[0].clone().downscale(self.scale_factor as usize);
+        frame1.planes[0].clone().downscale(self.scale_factor);
       let frame2_scaled =
-        frame2.planes[0].clone().downscale(self.scale_factor as usize);
+        frame2.planes[0].clone().downscale(self.scale_factor);
 
       let delta = self.delta_in_planes(&frame1_scaled, &frame2_scaled);
-      let threshold = self.threshold * len as u64;
+      let threshold = self.threshold;
       ScenecutResult {
         intra_cost: threshold as f64,
         threshold: threshold as f64,
         inter_cost: delta as f64,
-        has_scenecut: delta >= threshold,
+        has_scenecut: delta >= threshold as f64,
       }
     } else {
       let frame2_ref2 = Arc::clone(&frame2);
@@ -311,10 +325,13 @@ impl SceneChangeDetector {
     }
   }
 
+  /// Calculates delta beetween 2 planes
+  /// returns average for pixel
   fn delta_in_planes<T: Pixel>(
     &self, plane1: &Plane<T>, plane2: &Plane<T>,
-  ) -> u64 {
+  ) -> f64 {
     let mut delta = 0;
+
     let lines = plane1.rows_iter().zip(plane2.rows_iter());
 
     for (l1, l2) in lines {
@@ -322,29 +339,29 @@ impl SceneChangeDetector {
         .iter()
         .zip(l2.iter())
         .map(|(&p1, &p2)| {
-          (i16::cast_from(p1) - i16::cast_from(p2)).abs() as u64
+          (i16::cast_from(p1) - i16::cast_from(p2)).abs() as usize
         })
-        .sum::<u64>();
+        .sum::<usize>();
       delta += delta_line;
     }
-    delta
+    delta as f64 / self.pixels as f64
   }
 }
 
 /// Scaling factor for frame in scenedetection
-fn detect_scale_factor(sequence: &Arc<Sequence>) -> i32 {
+fn detect_scale_factor(sequence: &Arc<Sequence>) -> usize {
   let small_edge =
-    cmp::min(sequence.max_frame_height, sequence.max_frame_width) as i32;
+    cmp::min(sequence.max_frame_height, sequence.max_frame_width) as usize;
   let scale_factor = match small_edge {
     0..=480 => 1,
     481..=720 => 2,
     721..=1080 => 3,
     1081..=1600 => 4,
-    1601..=std::i32::MAX => 6,
+    1601..=std::usize::MAX => 6,
     _ => 1,
-  };
+  } as usize;
   debug!(
-    "Scene detection scale factor {}, [{},{}] -> [{},{}",
+    "Scene detection scale factor {}, [{},{}] -> [{},{}]",
     scale_factor,
     sequence.max_frame_width,
     sequence.max_frame_height,
