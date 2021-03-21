@@ -242,16 +242,6 @@ impl SceneChangeDetector {
       let frame2_scaled =
         frame2.planes[0].clone().downscale(self.scale_factor as usize);
 
-      debug!(
-        "Scale: {:?} Old: {:?}/{:?} New:{:?}/{:?}",
-        self.scale_factor,
-        frame1.planes[0].cfg.width,
-        frame1.planes[0].cfg.height,
-        frame1_scaled.cfg.width,
-        frame1_scaled.cfg.height,
-      );
-
-      let len = frame2_scaled.cfg.width * frame2_scaled.cfg.height;
       let delta = self.delta_in_planes(&frame1_scaled, &frame2_scaled);
       let threshold = self.threshold * len as u64;
       ScenecutResult {
@@ -354,8 +344,12 @@ fn detect_scale_factor(sequence: &Arc<Sequence>) -> i32 {
     _ => 1,
   };
   debug!(
-    "Scene detection scale factor {} for resolution [{},{}]",
-    scale_factor, sequence.max_frame_width, sequence.max_frame_height
+    "Scene detection scale factor {}, [{},{}] -> [{},{}",
+    scale_factor,
+    sequence.max_frame_width,
+    sequence.max_frame_height,
+    sequence.max_frame_width as usize / scale_factor,
+    sequence.max_frame_height as usize / scale_factor
   );
   scale_factor
 }
