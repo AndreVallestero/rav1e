@@ -507,12 +507,12 @@ impl<T: Pixel> Plane<T> {
         for x in 1..=scale {
           let src_row = &data_origin[(src.cfg.stride * 2 + x)..];
           for y in 1..=scale {
-            sum += u32::cast_from(src_row[col * 2 + y])
+            sum += u32::cast_from(src_row[col * 2 + y]) as usize
           }
         }
 
-        let pixels: u32 = (scale * scale) as u32; //
-        let avg: u32 = sum / pixels;
+        let pixels = scale * scale;
+        let avg = sum / pixels;
         *dst = T::cast_from(avg);
       }
     }
