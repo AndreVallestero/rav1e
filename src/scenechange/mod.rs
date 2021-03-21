@@ -131,10 +131,8 @@ impl SceneChangeDetector {
       previous_keyframe,
     );
     debug!(
-      "[SC-Detect] Frame {} to {}: I={:.3} T={:.3} P={:.3} {}",
-      current_frameno - 1,
+      "[SC-Detect] Frame {}: T={} P={:.1} {}",
       current_frameno,
-      result.intra_cost,
       result.threshold,
       result.inter_cost,
       if result.has_scenecut { "Scenecut" } else { "No cut" }
