@@ -59,7 +59,7 @@ impl SceneChangeDetector {
     // This may be adjusted later.
     //
     // This threshold is only used for the fast scenecut implementation.
-    const BASE_THRESHOLD: usize = 35;
+    const BASE_THRESHOLD: usize = 20;
     let bit_depth = encoder_config.bit_depth;
     let fast_mode = encoder_config.speed_settings.fast_scene_detection
       || encoder_config.low_latency;
