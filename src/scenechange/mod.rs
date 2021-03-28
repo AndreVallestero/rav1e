@@ -154,12 +154,16 @@ impl<T: Pixel> SceneChangeDetector<T> {
       self.frame_buffer.push(frame2_scaled);
     } else {
       self.frame_buffer[0] = self.frame_buffer[1].clone();
-      frame2.planes[0].downscale(self.scale_factor);
+      self.frame_buffer[1] = frame2.planes[0].downscale(self.scale_factor);
     }
 
     let delta =
       self.delta_in_planes(&self.frame_buffer[0], &self.frame_buffer[1]);
     let threshold = self.threshold;
+    if delta >= threshold as f64 {
+      self.frame_buffer.clear();
+    }
+
     ScenecutResult {
       intra_cost: threshold as f64,
       threshold: threshold as f64,

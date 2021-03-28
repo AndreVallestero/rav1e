@@ -7,13 +7,13 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
+use rayon::current_num_threads;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::*;
-use rayon::current_num_threads;
 use rust_hawktracer::*;
+use std::cmp;
 use std::marker::PhantomData;
 use std::mem;
-use std::cmp::max;
 use std::ops::{Index, IndexMut, Range};
 use std::{
   alloc::{alloc, dealloc, Layout},
@@ -490,7 +490,7 @@ impl<T: Pixel> Plane<T> {
   #[hawktracer(downscale)]
   pub fn downscale(&self, scale: usize) -> Plane<T> {
     let box_pixels = scale * scale;
-    let half_box_pixels = box_pixels / 2;
+    let half_box_pixels = box_pixels / 2; // Used for rounding int division
 
     let src = self;
     let data_origin = src.data_origin();
@@ -500,10 +500,10 @@ impl<T: Pixel> Plane<T> {
       Plane::new_uninitialized(
         src.cfg.width / scale,
         src.cfg.height / scale,
-        src.cfg.xdec + 1,
-        src.cfg.ydec + 1,
-        src.cfg.xpad / scale,
-        src.cfg.ypad / scale,
+        0,
+        0,
+        0,
+        0,
       )
     };
 
@@ -514,16 +514,18 @@ impl<T: Pixel> Plane<T> {
     // Par iter over dst chunks
     let np_raw_slice = new_plane.data.deref_mut();
     let threads = current_num_threads();
-    let chunk_rows = max(1, (height + threads / 2) / threads);
+    let chunk_rows = cmp::max((height + threads / 2) / threads, 1);
+
     let chunk_size = chunk_rows * stride;
+
     let height_limit = height * stride;
-    np_raw_slice[0..height_limit].par_chunks_mut(chunk_size).enumerate().for_each(
-      |(chunk_idx, chunk)| {
-        
+    np_raw_slice[0..height_limit]
+      .par_chunks_mut(chunk_size)
+      .enumerate()
+      .for_each(|(chunk_idx, chunk)| {
         // Iter dst rows
         let dst_rows = chunk.chunks_mut(stride);
         for (row_offset, dst_row) in dst_rows.enumerate() {
-          assert_eq!(dst_row.len(), stride); // TODO: Remove this once unit testing is implemented
           let row_idx = chunk_idx * chunk_rows + row_offset;
 
           // Iter dst cols
@@ -550,8 +552,8 @@ impl<T: Pixel> Plane<T> {
             *dst = T::cast_from(avg);
           }
         }
-      }
-    );
+      });
+
     new_plane
   }
 
@@ -885,6 +887,7 @@ pub mod test {
       &downsampled.data[..]
     );
   }
+
   #[test]
   fn test_plane_downsample_odd() {
     #[rustfmt::skip]
@@ -964,7 +967,7 @@ pub mod test {
     #[rustfmt::skip]
     assert_eq!(
       &[
-        2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+        2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         9, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
       ][..],
       &downsampled.data[..]
@@ -973,6 +976,44 @@ pub mod test {
 
   #[test]
   fn test_plane_downscale_odd() {
+    #[rustfmt::skip]
+  let plane = Plane::<u8> {
+      data: PlaneData::from_slice(&[
+        1, 2, 3, 4, 1, 2, 3, 4,
+        0, 0, 8, 7, 6, 5, 8, 7, 
+        6, 5, 8, 7, 6, 5, 8, 7, 
+        6, 5, 8, 7, 0, 0, 2, 3, 
+        4, 5, 0, 0, 9, 8, 7, 6, 
+        0, 0, 0, 0, 2, 3, 4, 5,
+        0, 0, 0, 0, 2, 3, 4, 5,
+      ]),
+      cfg: PlaneConfig {
+        stride: 8,
+        alloc_height: 7,
+        width: 8,
+        height: 7,
+        xdec: 0,
+        ydec: 0,
+        xpad: 0,
+        ypad: 0,
+        xorigin: 0,
+        yorigin: 0,
+      },
+    };
+
+    let downscaled = plane.downscale(3);
+
+    #[rustfmt::skip]
+    assert_eq!(
+      &[
+        4, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 
+      ],
+      &downscaled.data[..]);
+  }
+
+  #[test]
+  fn test_plane_downscale_odd_2() {
     #[rustfmt::skip]
     let plane = Plane::<u8> {
       data: PlaneData::from_slice(&[
